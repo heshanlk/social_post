@@ -1,0 +1,5 @@
+name = Social Post
+description = Allows to connect to social accounts and make posts to their feeds.
+core = 7.x
+package = Social
+configure = admin/config/services/social-post

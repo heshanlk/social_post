@@ -1,0 +1,5 @@
+name = Social Post Twitter
+description = Allows to connect to Twitter and make posts to their feeds.
+core = 7.x
+package = Social
+dependencies[] = social_post

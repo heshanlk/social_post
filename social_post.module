@@ -1,0 +1,351 @@
+<?php
+
+/**
+ * @file
+ */
+
+require_once __DIR__ .  "/vendor/autoload.php";
+
+/**
+ * Implements hook_menu().
+ */
+function social_post_menu() {
+  $items = array();
+  $items['admin/config/services/social-post'] = array(
+    'title' => 'Social post',
+    'description' => 'Configuration for social post module',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('social_post_settings_form'),
+    'access arguments' => array('adminster site configuration'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+  $items['admin/config/services/social-post/callback/%social_post_account'] = array(
+    'page callback' => 'social_post_post_authentication',
+    'page arguments' => array(5),
+    'access arguments' => array('adminster site configuration'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+  return $items;
+}
+
+/**
+ * Local the account
+ */
+function social_post_account_load($id){
+  return _get_social_post_account_by_attribute('id', $id);
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter() for node_type_form().
+ */
+function social_post_form_node_type_form_alter(&$form, $form_state, $form_id) {
+  $type = $form['#node_type']->type;
+  $allowed_types = variable_get('social_post_accounts_' . $type, array());
+  $form['social_post'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Social post'),
+    '#group' => 'additional_settings',
+    '#collapsible' => TRUE,
+    '#collapsed' => TRUE
+  );
+  $accounts = variable_get('social_post_accounts', array());
+  $options = [];
+  foreach($accounts as $account){
+    if($account){
+      $account = _get_social_post_account_by_attribute('id', $account);
+      $options[$account['id']] = 'Post to ' . $account['name'];
+      $form['social_post']['social_post_accounts_' . $account['id']] = array(
+        '#title' => t($account['name'] . ' accounts'),
+        '#type' =>'fieldset',
+        '#states' => array(
+          'visible' => array(
+            ':input[name="social_post_accounts['.$account['id'].']"]' => array('checked' => TRUE),
+          ),
+          'required' => array(
+            ':input[name="social_post_accounts['.$account['id'].']"]' => array('checked' => TRUE),
+          ),
+        ),
+        '#weight' => 20,
+      );
+      $social_accounts = variable_get('social_post_data:accounts:' . $account['id'], array());
+      $social_accounts_options = array();
+      foreach($social_accounts as $social_account){
+        $social_accounts_options[$social_account['id']] = $social_account['name'];
+      }
+      $form['social_post']['social_post_accounts_' . $account['id']][$account['id'] . '_accounts'] = array(
+        '#title' => t(''),
+        '#type' => 'checkboxes',
+        '#options' => $social_accounts_options,
+        '#default_value' => variable_get('social_post_accounts:ids:' . $account['id'] . ':' . $type, array())
+      );
+    }
+  }
+  $form['social_post']['social_post_accounts'] = array(
+    '#title' => t('Social accounts'),
+    '#type' => 'checkboxes',
+    '#options' => $options,
+    '#default_value' => !empty($allowed_types) ? $allowed_types : array(),
+    '#description' => t('There are also <a href="@url">global options</a> that affect these option.', array('@url' => url('admin/config/services/social-post'))),
+  );
+  $form['#submit'][] = 'social_post_form_node_type_form_submit';
+}
+
+/**
+ * FormAPI submission callback for node_type_form().
+ *
+ * @see twitter_post_form_node_type_form_alter().
+ */
+function social_post_form_node_type_form_submit($form, $form_state) {
+  $type = $form_state['values']['type'];
+  $allowed_types = variable_get('social_post_accounts_' . $type, array());
+  variable_set('social_post_accounts_' . $type, $form_state['values']['social_post_accounts']);
+  foreach(array_filter($form_state['values']['social_post_accounts']) as $account){
+    variable_set('social_post_accounts:ids:' . $account . ':' . $type, $form_state['values'][$account . '_accounts']);
+  }
+}
+
+/**
+ * Page callback: Social posts settings
+ */
+function social_post_settings_form($form, &$form_state) {
+  $results = array();
+  foreach (module_implements('social_post_accounts') as $module) {
+    $results += module_invoke($module, 'social_post_accounts');
+  }
+  $options = array();
+  foreach($results as $id => $result){
+    $options[$id] = $result['name'];
+    // prefix each item with the app id
+    foreach($result['settings'] as $key =>$value){
+      $new_key = $id . '_' . $key;
+      $result['settings'][$new_key] = $result['settings'][$key];
+      $result['settings'][$new_key]['#default_value'] = variable_get($new_key, '');
+      unset($result['settings'][$key]);
+    }
+    $result['settings']['verify_' . $id] = array(
+      '#type' => 'submit',
+      '#value' => t('Verify ' . $result['name']),
+      '#name' => $id
+    );
+    $form['social_post_accounts_' . $id] = array(
+      '#title' => t($result['name'] . ' settings'),
+      '#type' =>'fieldset',
+      '#states' => array(
+        'visible' => array(
+          ':input[name="social_post_accounts['.$id.']"]' => array('checked' => TRUE),
+        ),
+        'required' => array(
+          ':input[name="social_post_accounts['.$id.']"]' => array('checked' => TRUE),
+        ),
+      ),
+      '#weight' => 20,
+      'settings' => $result['settings'],
+    );
+  }
+  $form['social_post_accounts'] = array(
+    '#type' => 'checkboxes',
+    '#title' => t('Social accounts'),
+    '#default_value' => variable_get('social_post_accounts', array()),
+    '#description' => t('Enable social accounts.'),
+    '#required' => TRUE,
+    '#options' => $options
+  );
+  $form['#submit'][] = 'social_post_settings_form_submit';
+  return system_settings_form($form);
+}
+
+/**
+ * Validate the admin form
+ */
+function social_post_settings_form_validate($form, &$form_state) {
+    $clicked_button = $form_state['clicked_button'];
+    $values = $form_state['values'];
+    if($clicked_button['#value'] != 'Save configuration'){
+      $account = _get_social_post_account_by_attribute('id', $clicked_button['#name']);
+      $function = $account['authentication'];
+      $data = array('oauth_callback' => url('admin/config/services/social-post/callback/' . $account['id'], array('absolute' => TRUE)));
+      foreach($values as $key => $value){
+        if (strpos($key, $account['id'] . '_') === 0) {
+          $key = str_replace($account['id'] . '_', '', $key);
+          $data[$key] = $value;
+        }
+      }
+      if(!$function($data)){
+        form_set_error('', t( $account['name']. ', authentication failed. Please see logs for details.'));
+      }
+    }
+}
+
+/**
+ * Submit the admin form
+ */
+function social_post_settings_form_submit($form, &$form_state) {}
+
+/**
+ * Get attributes
+ */
+function _get_social_post_account_by_attribute($name, $value) {
+  $results = array();
+  foreach (module_implements('social_post_accounts') as $module) {
+    $results += module_invoke($module, 'social_post_accounts');
+  }
+  foreach ($results as $key => $val) {
+    if($name == 'id'){
+      if($key === $value){
+        $val['id'] = $key;
+        return $val;
+      }
+      continue;
+    }
+    if ($val[$name] === $value) {
+      return $val;
+    }
+  }
+  return NULL;
+}
+
+/**
+ * Post authentication 
+ */
+function social_post_post_authentication($account) {
+  $data = $_GET + social_post_load_saved_data($account);
+  unset($data['q']);
+  $function = $account['post_authentication'];
+  if(!($return_data = $function($data))){
+    form_set_error('', t( $account['name']. ' post authentication failed. Please see logs for details.'));
+  }
+  else {
+    variable_set('social_post_data:' . $account['id'], $return_data);
+    $data = social_post_load_saved_data($account);
+    // Callback on retrive accounts
+    $function = $account['accounts'];
+    if(!($return_accounts = $function($data))){
+      form_set_error('', t( $account['name']. ' post account retrived failed. Please see logs for details.'));
+    }
+    variable_set('social_post_data:accounts:' . $account['id'], $return_accounts);
+    drupal_set_message(t($account['name'] . ' authentication was successful.'));
+    drupal_goto('admin/config/services/social-post');
+  }
+  return '';
+}
+
+/**
+ * Get the saved data
+ */
+function social_post_load_saved_data($account){
+  $data = array();
+  foreach($account['settings'] as $key => $value){
+    $data[$key] = variable_get($account['id'] . '_' . $key, '');
+  }
+  // additional data if exists
+  $extra_data = variable_get('social_post_data:' . $account['id'], array());
+  if(!empty($extra_data)){
+    $data += $extra_data;
+  }
+  $data['accounts'] = variable_get('social_post_data:accounts:' . $account['id'], array());
+  return $data;
+}
+
+/**
+ * Implements hook_form_alter().
+ */
+function social_post_form_alter(&$form, $form_state, $form_id) {
+  if (isset($form['#node']) && $form['#node']->type . '_node_form' == $form_id) {
+    $node = $form['#node'];
+    $type = $node->type;
+
+    // Fail early if Twitter posting hasn't been on this node type.
+    $allowed_types = variable_get('social_post_accounts', array());
+    $form['social_post'] = array(
+      '#type' => 'fieldset',
+      '#group' => 'additional_settings',
+      '#title' => t('Social post'),
+      '#collapsible' => TRUE,
+      '#collapsed' => FALSE,
+      '#tree' => TRUE,
+    );
+    $options = array();
+    foreach(array_filter($allowed_types) as $id){
+      $account = _get_social_post_account_by_attribute('id', $id);
+      $options[$account['id']] = 'Post to ' . $account['name'];
+      // social account details
+      $options[$account['id']] = 'Post to ' . $account['name'];
+      $form['social_post']['social_post_accounts_' . $account['id']] = array(
+        '#title' => t($account['name'] . ' accounts'),
+        '#type' =>'fieldset',
+        '#states' => array(
+          'visible' => array(
+            ':input[name="social_post[social_post_accounts]['.$account['id'].']"]' => array('checked' => TRUE),
+          ),
+          'required' => array(
+            ':input[name="social_post[social_post_accounts]['.$account['id'].']"]' => array('checked' => TRUE),
+          ),
+        ),
+        '#weight' => 20,
+      );
+      $social_accounts = variable_get('social_post_data:accounts:' . $account['id'], array());
+      $social_accounts_options = array();
+      foreach($social_accounts as $social_account){
+        $social_accounts_options[$social_account['id']] = $social_account['name'];
+      }
+      $form['social_post']['social_post_accounts_' . $account['id']]['accounts'] = array(
+        '#title' => t(''),
+        '#type' => 'checkboxes',
+        '#options' => $social_accounts_options,
+        '#default_value' => variable_get('social_post_accounts:ids:' . $account['id'] . ':' . $type, array())
+      );
+      // Text field for messages
+      $form['social_post']['social_post_accounts_' . $account['id']]['message'] = array(
+        '#title' => t('Message'),
+        '#type' => 'textarea',
+        '#rows' => 2,
+        '#default_value' => 'New post: [node:title] [node:url]',
+        '#description' => t('The given text will be posted to ' . $account['name'] . '.'),
+        '#weight' => 20,
+      );
+    }
+    $form['social_post']['social_post_accounts'] = array(
+      '#type' => 'checkboxes',
+      '#title' => t(''),
+      '#options' => $options,
+      '#default_value' => array_filter(variable_get('social_post_accounts_' . $node->type, array()))
+    );
+    $form['social_post']['token_tree'] = array(
+      '#type' => 'fieldset',
+      '#title' => t('Replacement patterns'),
+      '#collapsible' => TRUE,
+      '#collapsed' => TRUE,
+      '#description' => theme('token_tree', array('token_types' => array('node'))),
+      '#weight' => 21,
+      '#access' => module_exists('token')
+    );
+  }
+}
+
+/**
+ * Implementation of hook_node_insert().
+ */
+function social_post_node_insert($node) {
+  if(!empty($node->status) && !empty($node->social_post) && !empty($node->social_post['social_post_accounts'])) {
+    $accounts = isset($node->social_post['social_post_accounts']) ? array_filter($node->social_post['social_post_accounts']) : array();
+    foreach($accounts as $id){
+      $account = _get_social_post_account_by_attribute('id', $id);
+      $data = social_post_load_saved_data($account);
+      $data['accounts_to_publish'] = array_filter($node->social_post['social_post_accounts_' . $id]['accounts']);
+      $data['link'] = url(drupal_get_path_alias('node/' . $node->nid), array('absolute' => TRUE));
+      $data['message'] = token_replace($node->social_post['social_post_accounts_' . $id]['message'], array('node' => $node));
+      $function = $account['publish'];
+      if(!($return_data = $function($data))){
+        drupal_set_message(t($account['name'] . ' post was unsuccessful.'), 'error');
+      }
+      else {}
+    }
+  }
+}
+
+/**
+ * Implementation of hook_node_update().
+ */
+function social_post_node_update($node) {
+  social_post_node_insert($node);
+}

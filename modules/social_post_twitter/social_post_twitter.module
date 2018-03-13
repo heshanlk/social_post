@@ -1,0 +1,82 @@
+<?php
+
+/**
+ * @file
+ */
+
+use Abraham\TwitterOAuth\TwitterOAuth;
+
+function social_post_twitter_social_post_accounts(){
+  return array(
+    'twitter' => array(
+      'name' => 'Twitter',
+      'settings' => array(
+        'consumer_key' => array(
+          '#type' => 'textfield',
+          '#title' => t('Consumer Key')
+        ),
+        'consumer_secret' => array(
+          '#type' => 'textfield',
+          '#title' => t('Consumer Secret')
+        )
+      ),
+      'authentication' => '_social_post_twitter_social_post_authentication_callback',
+      'post_authentication' => '_social_post_twitter_social_post_post_authentication_callback',
+      'publish' => '_social_post_twitter_social_post_publish_callback',
+      'accounts' => '_social_post_twitter_social_post_get_accounts_callback'
+    )
+  );
+}
+
+/**
+ * Authentication callback
+ */
+function _social_post_twitter_social_post_authentication_callback($data){
+  $connection = new TwitterOAuth($data['consumer_key'], $data['consumer_secret']);
+  $request_token = $connection->oauth("oauth/request_token");
+  $_SESSION['oauth_token'] = $request_token['oauth_token'];
+  $_SESSION['oauth_token_secret'] = $request_token['oauth_token_secret'];
+  if ($connection->getLastHttpCode() == 200) {
+    $url = $connection->url("oauth/authorize", ["oauth_token" => $request_token['oauth_token'], "oauth_callback" => $data['oauth_callback']]);
+    drupal_goto($url);
+    return TRUE;
+  } else {
+    return FALSE;
+  }
+}
+
+/**
+ * Post authentication callback
+ */
+function _social_post_twitter_social_post_post_authentication_callback($data){
+  $connection = new TwitterOAuth($data['consumer_key'], $data['consumer_secret'], $_SESSION['oauth_token'], $_SESSION['oauth_token_secret']);
+  $access_token = $connection->oauth("oauth/access_token", ["oauth_verifier" => $data['oauth_verifier']]);
+  if ($connection->getLastHttpCode() == 200) {
+    return $access_token;
+  } else {
+    return FALSE;
+  }
+}
+
+/**
+ * Publish callback
+ */
+function _social_post_twitter_social_post_publish_callback($data){
+  $connection = new TwitterOAuth($data['consumer_key'], $data['consumer_secret'], $data['oauth_token'], $data['oauth_token_secret']);
+  $statues = $connection->post("statuses/update", ["status" => $data['message']]);
+  if ($connection->getLastHttpCode() == 200) {
+    return TRUE;
+  } else {
+    return FALSE;
+  }
+}
+
+
+/**
+ * Get social accounts 
+ */
+function _social_post_twitter_social_post_get_accounts_callback($data){
+  return array(
+    array('id' => $data['user_id'], 'name' => $data['screen_name'])
+  );
+}

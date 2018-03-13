@@ -1,0 +1,5 @@
+name = Social Post Facebook
+description = Allows to connect to Facebook and make posts to their Facebook feeds.
+core = 7.x
+package = Social
+dependencies[] = social_post
