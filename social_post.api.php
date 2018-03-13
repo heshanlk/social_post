@@ -20,7 +20,8 @@ function hook_social_post_accounts(){
       ),
       'authentication' => '_social_post_twitter_social_post_authentication_callback',
       'post_authentication' => '_social_post_twitter_social_post_post_authentication_callback',
-      'publish' => '_social_post_twitter_social_post_publish_callback'
+      'publish' => '_social_post_twitter_social_post_publish_callback',
+      'accounts' => '_social_post_twitter_social_post_get_accounts_callback'
     );
   );
 }
